@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# Data and model artifacts - never commit these
+data/
+checkpoints/
+*.pt
+*.pth
+
+# Secrets and local env - keep credentials out of git
+.env
+*.secret
+secrets/
+
+# Editor / OS noise
+.vscode/
+.idea/
+.DS_Store
+
+# Test/scratch output
+test_image.png
+*.log
