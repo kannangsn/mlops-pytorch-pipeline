@@ -1,0 +1,4 @@
+# Everything needed to run the test suite locally / in CI.
+-r train.txt
+-r serve.txt
+pytest==8.2.2

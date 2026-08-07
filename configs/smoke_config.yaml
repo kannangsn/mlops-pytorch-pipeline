@@ -1,0 +1,22 @@
+# Tiny run on random data - used by CI and run_tests.sh to verify the
+# training loop end-to-end without downloading CIFAR-10.
+model:
+  architecture: simple_cnn
+  num_classes: 10
+
+training:
+  epochs: 2
+  batch_size: 32
+  learning_rate: 0.001
+  early_stopping_patience: 3
+  seed: 42
+  max_batches: 4
+
+data:
+  dataset: fake
+  data_dir: ./data
+  num_workers: 0
+
+output:
+  checkpoint_dir: ./checkpoints
+  model_name: smoke_model.pt
