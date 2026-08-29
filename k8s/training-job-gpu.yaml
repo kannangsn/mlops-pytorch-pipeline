@@ -1,0 +1,61 @@
+# GPU variant of the training job (bonus task).
+# Apply this INSTEAD of training-job.yaml on a cluster that has NVIDIA GPU
+# nodes and the NVIDIA device plugin installed. On a CPU-only cluster
+# (e.g. plain minikube) this pod would stay Pending because no node can
+# satisfy the GPU request.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: model-training-gpu
+  namespace: ml-training
+  labels:
+    app: model-training
+    accelerator: gpu
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        app: model-training
+        accelerator: gpu
+    spec:
+      restartPolicy: Never
+      # Schedule only onto nodes labelled as GPU nodes.
+      nodeSelector:
+        accelerator: nvidia-gpu
+      # GPU nodes are commonly tainted so that ordinary pods stay off them;
+      # this toleration lets the training pod be scheduled there anyway.
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: trainer
+          image: mlops-train:v1
+          imagePullPolicy: IfNotPresent
+          resources:
+            requests:
+              cpu: "2"
+              memory: 4Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+              nvidia.com/gpu: 1
+          volumeMounts:
+            - name: config
+              mountPath: /app/configs
+              readOnly: true
+            - name: data
+              mountPath: /app/data
+            - name: checkpoints
+              mountPath: /app/checkpoints
+      volumes:
+        - name: config
+          configMap:
+            name: training-config
+        - name: data
+          persistentVolumeClaim:
+            claimName: data-pvc
+        - name: checkpoints
+          persistentVolumeClaim:
+            claimName: checkpoints-pvc

@@ -1,0 +1,37 @@
+# Stage 1: install inference dependencies into a venv
+FROM python:3.11-slim AS builder
+
+WORKDIR /app
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+COPY requirements/serve.txt .
+RUN pip install --no-cache-dir -r serve.txt
+
+# Stage 2: serving runtime, runs as a non-root user
+FROM python:3.11-slim AS serving
+
+WORKDIR /app
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    MODEL_PATH=/app/checkpoints/classifier_v1.pt
+
+COPY src/ ./src/
+
+RUN useradd --create-home --uid 1000 appuser \
+    && mkdir -p /app/checkpoints \
+    && chown -R appuser:appuser /app
+USER appuser
+
+EXPOSE 8080
+
+# Probe /health with the stdlib so we don't need curl in the image.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD python -c "import urllib.request,sys; \
+r=urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=4); \
+sys.exit(0 if r.status==200 else 1)" || exit 1
+
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "2", \
+     "--timeout", "60", "--pythonpath", "src", "serve:app"]

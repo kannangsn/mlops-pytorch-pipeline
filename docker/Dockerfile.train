@@ -1,0 +1,25 @@
+# Stage 1: build the dependency layer in an isolated venv
+FROM python:3.11-slim AS builder
+
+WORKDIR /app
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+COPY requirements/train.txt .
+RUN pip install --no-cache-dir -r train.txt
+
+# Stage 2: training runtime - only the venv and the code, no pip cache
+FROM python:3.11-slim AS training
+
+WORKDIR /app
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+COPY src/ ./src/
+# Baked-in default config; normally overridden by a ConfigMap/volume
+# mounted at /app/configs or by setting CONFIG_PATH.
+COPY configs/ ./configs/
+
+ENTRYPOINT ["python", "src/train.py"]
