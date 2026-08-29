@@ -4,7 +4,7 @@
 **Roll No:** DA25M574
 
 - GitHub repository: `https://github.com/kannangsn/mlops-pytorch-pipeline`
-- Final validation PR: `<add link to the PR containing the screenshots/logs>`
+- Final validation PR: `https://github.com/kannangsn/mlops-pytorch-pipeline/pull/5`
 
 ---
 
@@ -177,7 +177,103 @@ kubectl port-forward svc/model-serving 8080:80 -n ml-training
 curl -X POST http://localhost:8080/predict -F "image=@test_image.png"
 ```
 
-`<insert kubectl terminal screenshots here after running on cluster>`
+Full terminal evidence (11 screenshots, `Screenshots/SS-1` through `SS-11`,
+also attached to PR #5) is transcribed below.
+
+**A bug was found and fixed during this validation.** The first deploy of
+`serving-deployment.yaml` crash-looped: both pods restarted 5 times before
+stabilizing (`kubectl describe pod` showed the liveness probe killing the
+container with `connection refused` / `context deadline exceeded`). Root
+cause: the container needs 30-55s on cold start to import
+torch/torchvision and load the checkpoint off the PVC, but the liveness
+probe had no `initialDelaySeconds`, so kubelet started killing it before it
+was ready. Fixed by adding `initialDelaySeconds: 45` and `timeoutSeconds: 5`
+to the liveness probe (commit `d774d71`). Screenshots 8-9 below reflect the
+fixed, redeployed pods.
+
+```
+$ minikube start --cpus 2 --memory 4096 --driver=docker
+...
+Done! kubectl is now configured to use "minikube" cluster and "default" namespace by default
+$ kubectl get nodes
+NAME       STATUS   ROLES           AGE    VERSION
+minikube   Ready    control-plane   3m8s   v1.35.1
+
+$ kubectl apply -f k8s/namespace.yaml
+namespace/ml-training created
+$ kubectl apply -f k8s/configmap.yaml
+configmap/training-config created
+$ kubectl apply -f k8s/pvc.yaml
+persistentvolumeclaim/data-pvc created
+persistentvolumeclaim/checkpoints-pvc created
+$ kubectl apply -f k8s/training-job.yaml
+job.batch/model-training created
+
+$ kubectl logs -f job/model-training -n ml-training
+{"event": "config_loaded", "path": "/app/configs/training_config.yaml"}
+{"event": "device_selected", "device": "cpu"}
+Downloading https://cave.cs.toronto.edu/kriz/cifar-10-python.tar.gz to /app/data/cifar-10-python.tar.gz
+100.0%
+Extracting /app/data/cifar-10-python.tar.gz to /app/data
+Files already downloaded and verified
+{"epoch": 1, "train_loss": 1.3356, "train_accuracy": 0.5144, "val_loss": 1.7182, "val_accuracy": 0.5011}
+{"event": "checkpoint_saved", "path": "/app/checkpoints/classifier_v1.pt"}
+{"epoch": 2, "train_loss": 0.8562, "train_accuracy": 0.7007, "val_loss": 0.9004, "val_accuracy": 0.6983}
+{"event": "checkpoint_saved", "path": "/app/checkpoints/classifier_v1.pt"}
+{"epoch": 3, "train_loss": 0.6821, "train_accuracy": 0.7625, "val_loss": 0.6348, "val_accuracy": 0.7814}
+{"event": "checkpoint_saved", "path": "/app/checkpoints/classifier_v1.pt"}
+{"epoch": 4, "train_loss": 0.5837, "train_accuracy": 0.7993, "val_loss": 0.5894, "val_accuracy": 0.8016}
+{"event": "checkpoint_saved", "path": "/app/checkpoints/classifier_v1.pt"}
+{"epoch": 5, "train_loss": 0.503, "train_accuracy": 0.8276, "val_loss": 0.5992, "val_accuracy": 0.8002}
+{"epoch": 6, "train_loss": 0.4462, "train_accuracy": 0.8458, "val_loss": 0.5122, "val_accuracy": 0.8313}
+{"event": "checkpoint_saved", "path": "/app/checkpoints/classifier_v1.pt"}
+{"epoch": 7, "train_loss": 0.4009, "train_accuracy": 0.8618, "val_loss": 0.4742, "val_accuracy": 0.845}
+{"event": "checkpoint_saved", "path": "/app/checkpoints/classifier_v1.pt"}
+{"epoch": 8, "train_loss": 0.3699, "train_accuracy": 0.8732, "val_loss": 0.4123, "val_accuracy": 0.8594}
+{"event": "checkpoint_saved", "path": "/app/checkpoints/classifier_v1.pt"}
+{"epoch": 9, "train_loss": 0.3316, "train_accuracy": 0.8856, "val_loss": 0.4161, "val_accuracy": 0.857}
+{"epoch": 10, "train_loss": 0.3096, "train_accuracy": 0.8929, "val_loss": 0.3954, "val_accuracy": 0.8714}
+{"event": "checkpoint_saved", "path": "/app/checkpoints/classifier_v1.pt"}
+{"event": "training_complete", "best_val_loss": 0.3954}
+
+$ kubectl get jobs -n ml-training
+NAME             STATUS     COMPLETIONS   DURATION   AGE
+model-training   Complete   1/1           9h         9h
+
+$ kubectl apply -f k8s/serving-deployment.yaml
+deployment.apps/model-serving created
+$ kubectl apply -f k8s/serving-service.yaml
+service/model-serving created
+$ kubectl apply -f k8s/hpa.yaml
+horizontalpodautoscaler.autoscaling/model-serving-hpa created
+
+$ kubectl get pods -n ml-training
+NAME                            READY   STATUS      RESTARTS   AGE
+model-serving-5bb9c5df5-bmplt   1/1     Running     0          2m55s
+model-serving-5bb9c5df5-gj7rg   1/1     Running     0          2m38s
+model-training-jfnwj            0/1     Completed   0          10h
+
+$ kubectl describe deployment model-serving -n ml-training
+...
+Replicas:               2 desired | 2 updated | 2 total | 2 available | 0 unavailable
+...
+    Liveness:   http-get http://:8080/health delay=45s timeout=5s period=10s successThreshold=1 failureThreshold=3
+    Readiness:  http-get http://:8080/health delay=15s timeout=5s period=5s successThreshold=1 failureThreshold=3
+...
+Conditions:
+  Type           Status  Reason
+  ----           ------  ------
+  Available      True    MinimumReplicasAvailable
+  Progressing    True    NewReplicaSetAvailable
+NewReplicaSet:   model-serving-5bb9c5df5 (2/2 replicas created)
+
+$ kubectl port-forward svc/model-serving 8080:80 -n ml-training
+Forwarding from 127.0.0.1:8080 -> 8080
+Forwarding from [::1]:8080 -> 8080
+
+$ curl -X POST http://localhost:8080/predict -F "image=@test_image.png"
+{"confidence":0.4323,"predicted_class":"cat","probabilities":{"airplane":0.0132,"automobile":0.0001,"bird":0.1595,"cat":0.4323,"deer":0.2177,"dog":0.0161,"frog":0.1472,"horse":0.0072,"ship":0.0066,"truck":0.0002}}
+```
 
 ## 3. Git workflow followed
 
