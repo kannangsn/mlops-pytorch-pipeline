@@ -171,8 +171,10 @@ Notes:
 - The serving pods start even before a checkpoint exists; the readiness
   probe (`/health` returns 503 until the model loads) simply keeps them out
   of rotation, and the server re-tries loading on every health check.
-- GPU bonus: `k8s/training-job.yaml` contains a commented block adding
-  `nvidia.com/gpu: 1` limits plus a node selector/toleration for GPU nodes.
+- GPU bonus: `k8s/training-job-gpu.yaml` is a separate Job manifest with an
+  `nvidia.com/gpu: 1` limit, a node selector and a toleration for GPU nodes.
+  Apply it instead of `training-job.yaml` on a GPU-enabled cluster; on a
+  CPU-only cluster it would stay Pending by design.
 - The HPA needs metrics-server (`minikube addons enable metrics-server`).
 
 ## Git workflow
