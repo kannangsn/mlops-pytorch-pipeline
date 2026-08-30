@@ -8,7 +8,10 @@ class SimpleCNN(nn.Module):
     """A small 3-block CNN, good enough as a baseline for CIFAR-10."""
 
     def __init__(self, num_classes: int = 10):
+        """Build the conv feature extractor and the linear classifier head."""
         super().__init__()
+        # Three conv+BN+ReLU+pool blocks, halving the spatial size each time:
+        # 32x32 -> 16x16 -> 8x8 -> 4x4, while growing channels 3->32->64->128.
         self.features = nn.Sequential(
             nn.Conv2d(3, 32, kernel_size=3, padding=1),
             nn.BatchNorm2d(32),
@@ -23,6 +26,8 @@ class SimpleCNN(nn.Module):
             nn.ReLU(inplace=True),
             nn.MaxPool2d(2),  # 8 -> 4
         )
+        # Flatten the 128x4x4 feature map and classify with a small MLP,
+        # with dropout for regularization.
         self.classifier = nn.Sequential(
             nn.Flatten(),
             nn.Linear(128 * 4 * 4, 256),
@@ -32,6 +37,7 @@ class SimpleCNN(nn.Module):
         )
 
     def forward(self, x):
+        """Run the input batch through the feature extractor, then the classifier head."""
         return self.classifier(self.features(x))
 
 
@@ -50,6 +56,7 @@ def build_resnet18(num_classes: int = 10) -> nn.Module:
 
 
 def get_model(architecture: str, num_classes: int = 10) -> nn.Module:
+    """Instantiate a model by name: 'simple_cnn' or 'resnet18'."""
     architecture = architecture.lower()
     if architecture == "simple_cnn":
         return SimpleCNN(num_classes=num_classes)

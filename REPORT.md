@@ -1,14 +1,63 @@
-# Assignment Report — Deploying PyTorch ML Workloads with Docker & Kubernetes
+# Assignment Report: Deploying PyTorch ML Workloads with Docker & Kubernetes
 
 **Course:** DA5402W - Machine Learning Operations Lab
 **Roll No:** DA25M574
+**Name:** Kannan G S Nambiar 
 
 - GitHub repository: `https://github.com/kannangsn/mlops-pytorch-pipeline`
-- Final validation PR: `<add link to the PR containing the screenshots/logs>`
+- Final validation PR: `https://github.com/kannangsn/mlops-pytorch-pipeline/pull/5`
+
+- **NOTE:** Few more PRs were made to fix mostly documentation related aspects and to add more comments in code.
+---
+
+## Required Write-Up: What Was the Most Challenging Part? (300–500 words)
+
+The most challenging part of this assignment was, by some distance, getting the
+handover between the training Job and the serving Deployment to behave sensibly
+on Kubernetes. Everything up to that point (the model, the training loop, even
+the multi-stage Dockerfiles) produced immediate, visible failures during local
+development. The interaction between the training Job and the serving Deployment's
+shared storage failed differently: silently, and only once deployed. My first
+attempt simply mounted the checkpoint PVC into both workloads and assumed
+ordering would take care of itself; in practice the serving pods came up
+before the Job had written `classifier_v1.pt`, the liveness probe saw the app
+respond, the readiness probe saw a 503, and I initially misread the resulting
+`0/1 Ready` state as a broken probe configuration rather than the system doing
+exactly what I had asked. The fix ended up being in the application, not the
+YAML: the server now starts without a model, reports 503 from `/health`, and
+retries loading the checkpoint on every probe, so the pods join the Service
+automatically the moment training finishes. That inverted how I had been
+thinking: instead of orchestrating "train, then deploy" from outside, the
+serving layer became tolerant of the world it actually starts in.
+
+A second, smaller battle was image size and dependency hygiene. The naive
+`pip install torch` pulled the CUDA build and produced a multi-gigabyte image
+that took ages to load into minikube. Switching the pinned requirements to the
+CPU wheel index, splitting train/serve requirements so the serving image carries
+no training extras, and moving dependency installation into a builder stage
+brought both images down to something practical and made rebuilds fast because
+the dependency layer caches independently of code changes.
+
+Finally, the testing strategy required a design change I had initially been
+reluctant to make: the training loop originally always downloaded CIFAR-10,
+which made CI slow and flaky. Adding a
+`fake` dataset option and a `max_batches` cap felt like polluting the config at
+first, but it meant the same real code path (logging, early stopping,
+checkpointing) runs in seconds in CI and in `run_tests.sh`, which caught two
+genuine bugs (a checkpoint field mismatch and a probe path typo) before they
+reached the cluster. The lesson I take away is that most of the difficulty in
+MLOps is not in any single tool but in the seams between them, and the best
+fixes usually make the application more self-sufficient rather than the
+orchestration more elaborate.
 
 ---
 
-## 1. What was built
+## Additional Documentation and Evidence
+
+*(Supplementary material below: not explicitly required by the assignment
+text, included for completeness and to support the PR links above.)*
+
+### 1. What was built
 
 | Part | Deliverable | Where |
 |------|-------------|-------|
@@ -22,9 +71,9 @@
 Key Design decisions:
 
 - **Config injection.** `train.py` resolves its config from `--config`, then the
-  `CONFIG_PATH` env var, then `/app/configs/training_config.yaml` — so the same
-  image works locally (mounted volume), in Docker and under Kubernetes where the
-  ConfigMap is mounted at `/app/configs`.
+  `CONFIG_PATH` env var, then `/app/configs/training_config.yaml`. This means
+  the same image works locally (mounted volume), in Docker, and under
+  Kubernetes, where the ConfigMap is mounted at `/app/configs`.
 - **Checkpoint self-description.** The checkpoint stores the architecture name
   and class count, so `serve.py` reconstructs the right model without a second
   config file that could drift out of sync.
@@ -38,11 +87,11 @@ Key Design decisions:
 - **CPU-only PyTorch wheels** in the pinned requirements keep the Docker images
   and CI installs several GB smaller than the default CUDA build.
 
-### Conformance with course clarifications (Aug 2026 mailing-list thread)
+#### Conformance with course clarifications (Aug 2026 mailing-list thread)
 
 - The "2 PRs per week" wording was clarified as a suggestion of ~4 PRs total,
-  acceptable within a short duration — this repo has 4 feature PRs plus a
-  release PR.
+  acceptable within a short duration. This repo has 4 feature PRs, a
+  release PR and few documentation and cleanup related PRs.
 - PVCs are defined in a separate `k8s/pvc.yaml`, as explicitly approved.
 - The GPU bonus is implemented as a separate manifest
   (`k8s/training-job-gpu.yaml`) rather than commented-out configuration, per
@@ -53,7 +102,7 @@ Key Design decisions:
   PR; the HPA scales the serving deployment on CPU).
 - `tests/test_model.py` is implemented with real tests, as required.
 
-## 2. Reproducing the results
+### 2. Reproducing the results
 
 Everything below is reproduced by one script (see `README.md` for details):
 
@@ -62,7 +111,7 @@ Everything below is reproduced by one script (see `README.md` for details):
 ./run_tests.sh --docker   # additionally builds and tests the Docker images
 ```
 
-### 2.1 Unit tests
+#### 2.1 Unit tests
 
 ```
 $ pytest tests/ -v
@@ -85,7 +134,7 @@ tests/test_serve.py::test_predict_rejects_non_image PASSED               [100%]
 ============================== 11 passed in 2.23s ==============================
 ```
 
-### 2.2 Training run (JSON-line metrics, early stopping, checkpointing)
+#### 2.2 Training run (JSON-line metrics, early stopping, checkpointing)
 
 Short CIFAR-10 run (ResNet-18, 3 epochs, 120 batches/epoch on CPU):
 
@@ -106,7 +155,7 @@ The loss falls and accuracy rises epoch over epoch, and the best checkpoint is
 re-saved whenever validation loss improves, which is the behaviour the early
 stopping logic is built on.
 
-### 2.3 Docker verification (Part C)
+#### 2.3 Docker verification (Part C)
 
 Both images build from the same repo root context; the serving container was
 then run with the checkpoint directory mounted read-only:
@@ -151,12 +200,12 @@ $ docker run --rm \
 {"event": "training_complete", "best_val_loss": 2.3032}
 ```
 
-### 2.4 Kubernetes validation (Parts D–F)
+#### 2.4 Kubernetes validation (Parts D–F)
 
 Commands used on minikube (also in `README.md`):
 
 ```bash
-minikube start --cpus 4 --memory 8192
+minikube start --cpus 2 --memory 4096 --driver=docker
 eval $(minikube docker-env)
 docker build -f docker/Dockerfile.train -t mlops-train:v1 .
 docker build -f docker/Dockerfile.serve -t mlops-serve:v1 .
@@ -177,56 +226,63 @@ kubectl port-forward svc/model-serving 8080:80 -n ml-training
 curl -X POST http://localhost:8080/predict -F "image=@test_image.png"
 ```
 
-`<insert kubectl terminal screenshots here after running on cluster>`
+**A bug was found and fixed during this validation.** The first deploy of
+`serving-deployment.yaml` crash-looped: both pods restarted 5 times before
+stabilizing (`kubectl describe pod` showed the liveness probe killing the
+container with `connection refused` / `context deadline exceeded`). Root
+cause: the container needs 30-55s on cold start to import
+torch/torchvision and load the checkpoint off the PVC, but the liveness
+probe had no `initialDelaySeconds`, so kubelet started killing it before it
+was ready. Fixed by adding `initialDelaySeconds: 45` and `timeoutSeconds: 5`
+to the liveness probe (commit `d774d71`). Screenshots 8-9 below reflect the
+fixed, redeployed pods.
 
-## 3. Git workflow followed
+**Screenshot 1-3: cluster start**
+
+![Screenshot 1: minikube start](Screenshots/SS-1-minikube_start.png)
+
+![Screenshot 2: minikube start (continued)](Screenshots/SS-2-minikube_start.png)
+
+![Screenshot 3: minikube start (continued) and kubectl get nodes](Screenshots/SS-3-minikube_start.png)
+
+**Screenshot 4: apply namespace, ConfigMap, PVCs, training Job**
+
+![Screenshot 4: apply manifests and start training](Screenshots/SS-4-apply-manifests-run-training.png)
+
+**Screenshot 5: full training log, epoch 1 through completion**
+
+![Screenshot 5: training complete, epochs 1-10](Screenshots/SS-5-Training_complete.png)
+
+**Screenshot 6: confirm Job completion**
+
+![Screenshot 6: kubectl get jobs, COMPLETIONS 1/1](Screenshots/SS-6-Confirm_Completions.png)
+
+**Screenshot 7: deploy the serving layer**
+
+![Screenshot 7: apply serving-deployment, serving-service, hpa](<Screenshots/SS-7-deploy serving, verify health.png>)
+
+**Screenshot 8: pods running and healthy (after the probe fix)**
+
+![Screenshot 8: kubectl get pods, RESTARTS 0](<Screenshots/SS-8-Verify pods are running and healthy.png>)
+
+**Screenshot 9: deployment detail (after the probe fix)**
+
+![Screenshot 9: kubectl describe deployment, 2/2 available](Screenshots/SS-9-Replicas.png)
+
+**Screenshot 10: port-forward**
+
+![Screenshot 10: kubectl port-forward, Forwarding from 127.0.0.1:8080](Screenshots/SS-10-Port-Forwarding.png)
+
+**Screenshot 11: prediction request**
+
+![Screenshot 11: curl /predict, predicted_class and probabilities](Screenshots/SS-11-Predicted_class_probabilities.png)
+
+### 3. Git workflow followed
 
 - `develop` branched from `main`; all work on feature branches merged via PRs:
   1. `feature/pytorch-model` → model, dataset, training loop, tests (Week 1)
   2. `feature/serving-api` → Flask app, serving tests (Week 1)
   3. `feature/docker-images` → both Dockerfiles, pinned requirements, CI docker job (Week 2)
-  4. `feature/k8s-deployment` → all manifests, validation logs (Week 2)
+  4. `feature/k8s-deployment` → all manifests, validation logs, probe fix (Week 2)
 - Conventional Commits used throughout (`feat: add resnet18 variant for 32x32
   inputs`, `test: cover /predict error paths`, `ci: build images after tests`, …).
-
-## 4. Reflection — what was the most challenging part? (write-up)
-
-The most challenging part of this assignment was, by some distance, getting the
-handover between the training Job and the serving Deployment to behave sensibly
-on Kubernetes. Everything up to that point — the model, the training loop, even
-the multi-stage Dockerfiles — produced immediate, visible failures during local 
-development. The interaction between the training Job and the serving Deployment's 
-shared storage failed differently: silently, and only once deployed. My first 
-attempt simply mounted the checkpoint PVC into both workloads and assumed 
-ordering would take care of itself; in practice the serving pods came up
-before the Job had written `classifier_v1.pt`, the liveness probe saw the app
-respond, the readiness probe saw a 503, and I initially misread the resulting
-`0/1 Ready` state as a broken probe configuration rather than the system doing
-exactly what I had asked. The fix ended up being in the application, not the
-YAML: the server now starts without a model, reports 503 from `/health`, and
-retries loading the checkpoint on every probe, so the pods join the Service
-automatically the moment training finishes. That inverted how I had been
-thinking — instead of orchestrating "train, then deploy" from outside, the
-serving layer became tolerant of the world it actually starts in.
-
-A second, smaller battle was image size and dependency hygiene. The naive
-`pip install torch` pulled the CUDA build and produced a multi-gigabyte image
-that took ages to load into minikube. Switching the pinned requirements to the
-CPU wheel index, splitting train/serve requirements so the serving image carries
-no training extras, and moving dependency installation into a builder stage
-brought both images down to something practical and made rebuilds fast because
-the dependency layer caches independently of code changes.
-
-Finally, the testing strategy required a design change I had initially been 
-reluctant to make: the training loop originally always downloaded CIFAR-10, 
-which made CI slow and flaky. Adding a
-`fake` dataset option and a `max_batches` cap felt like polluting the config at
-first, but it meant the same real code path — logging, early stopping,
-checkpointing — runs in seconds in CI and in `run_tests.sh`, which caught two
-genuine bugs (a checkpoint field mismatch and a probe path typo) before they
-reached the cluster. The lesson I take away is that most of the difficulty in
-MLOps is not in any single tool but in the seams between them, and the best
-fixes usually make the application more self-sufficient rather than the
-orchestration more elaborate.
-
-*(~390 words)*
