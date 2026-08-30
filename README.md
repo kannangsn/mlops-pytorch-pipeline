@@ -4,8 +4,9 @@ End-to-end deployment pipeline for a PyTorch CIFAR-10 image classifier:
 local development → containerized training with Docker → orchestrated
 training and serving on Kubernetes.
 
-**Course:** MLOps & Infrastructure for Machine Learning (DA5402W)
+**Course:** Machine Learning Operations Lab (DA5402W)
 **Roll No:** DA25M574
+**Name:** Kannan G S Nambiar 
 
 ## Architecture
 
@@ -136,7 +137,7 @@ Tested with minikube. Build the images into the cluster's Docker daemon so
 `imagePullPolicy: IfNotPresent` finds them:
 
 ```bash
-minikube start --cpus 4 --memory 8192
+minikube start --cpus 2 --memory 4096 --driver=docker
 eval $(minikube docker-env)
 docker build -f docker/Dockerfile.train -t mlops-train:v1 .
 docker build -f docker/Dockerfile.serve -t mlops-serve:v1 .
@@ -181,8 +182,8 @@ Notes:
 
 - `main` is the release branch, `develop` the integration branch.
 - All work happens on feature branches (`feature/pytorch-model`,
-  `feature/docker-training`, `feature/k8s-training-job`,
-  `feature/k8s-serving`) merged into `develop` via PRs, then `develop → main`.
+  `feature/serving-api`, `feature/docker-images`,
+  `feature/k8s-deployment`) merged into `develop` via PRs, then `develop → main`.
 - Commit messages follow Conventional Commits (`feat:`, `fix:`, `docs:`,
   `test:`, `ci:`).
 - No datasets, checkpoints or secrets are committed (see `.gitignore`);

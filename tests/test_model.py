@@ -5,6 +5,7 @@ from model import SimpleCNN, get_model
 
 
 def test_simple_cnn_output_shape():
+    """SimpleCNN should map a batch of 32x32 images to (batch, num_classes) logits."""
     model = get_model("simple_cnn", num_classes=10)
     x = torch.randn(4, 3, 32, 32)
     out = model(x)
@@ -12,6 +13,7 @@ def test_simple_cnn_output_shape():
 
 
 def test_resnet18_output_shape():
+    """The CIFAR-adapted ResNet-18 should also output (batch, num_classes) logits."""
     model = get_model("resnet18", num_classes=10)
     x = torch.randn(2, 3, 32, 32)
     out = model(x)
@@ -19,6 +21,7 @@ def test_resnet18_output_shape():
 
 
 def test_unknown_architecture_raises():
+    """get_model() should reject unsupported architecture names with a clear error."""
     try:
         get_model("vgg99")
     except ValueError as e:
@@ -28,6 +31,7 @@ def test_unknown_architecture_raises():
 
 
 def test_softmax_gives_valid_probabilities():
+    """Softmax over the model's logits should yield a valid probability distribution."""
     model = get_model("simple_cnn")
     model.eval()
     with torch.no_grad():
@@ -58,6 +62,7 @@ def test_checkpoint_roundtrip(tmp_path):
 
 
 def test_training_config_is_complete():
+    """The shipped training_config.yaml should have all fields train.py relies on."""
     with open("configs/training_config.yaml") as f:
         cfg = yaml.safe_load(f)
     assert cfg["model"]["num_classes"] == 10

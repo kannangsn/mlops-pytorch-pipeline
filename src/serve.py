@@ -32,11 +32,13 @@ class ModelStore:
     """
 
     def __init__(self, model_path: str):
+        """Record where the checkpoint lives; no I/O happens yet."""
         self.model_path = model_path
         self.model = None
         self.transform = get_transforms(train=False)
 
     def try_load(self) -> bool:
+        """Load the checkpoint into memory if it isn't already; return success."""
         if self.model is not None:
             return True
         if not os.path.exists(self.model_path):
@@ -61,6 +63,7 @@ class ModelStore:
 
     @torch.no_grad()
     def predict(self, image: Image.Image) -> dict:
+        """Run one image through the model and return class probabilities."""
         image = image.convert("RGB").resize((32, 32))
         batch = self.transform(image).unsqueeze(0)
         probs = torch.softmax(self.model(batch), dim=1).squeeze(0)
@@ -76,19 +79,22 @@ class ModelStore:
 
 
 def create_app(model_path: str | None = None) -> Flask:
+    """Build the Flask app and wire up the /health and /predict routes."""
     app = Flask(__name__)
     store = ModelStore(model_path or os.environ.get("MODEL_PATH", DEFAULT_MODEL_PATH))
-    store.try_load()
+    store.try_load()  # best-effort at startup; not fatal if it fails yet
     app.config["MODEL_STORE"] = store
 
     @app.get("/health")
     def health():
+        """Return 200 if the model is loaded (or just loaded now), 503 otherwise."""
         if store.try_load():
             return jsonify({"status": "ok", "model_path": store.model_path}), 200
         return jsonify({"status": "model_not_loaded", "model_path": store.model_path}), 503
 
     @app.post("/predict")
     def predict():
+        """Accept an uploaded image and return predicted class probabilities."""
         if not store.try_load():
             return jsonify({"error": "model not loaded"}), 503
         if "image" not in request.files:
@@ -102,8 +108,11 @@ def create_app(model_path: str | None = None) -> Flask:
     return app
 
 
+# Module-level app object so gunicorn/Flask can import "serve:app" directly.
 app = create_app()
 
 if __name__ == "__main__":
+    # Only used for local `python serve.py` runs; gunicorn is the entrypoint
+    # inside the Docker image (see docker/Dockerfile.serve).
     port = int(os.environ.get("PORT", "8080"))
     app.run(host="0.0.0.0", port=port)
