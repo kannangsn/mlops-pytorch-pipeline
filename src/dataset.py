@@ -14,14 +14,17 @@ CIFAR10_CLASSES = [
 
 
 def get_transforms(train: bool = True) -> transforms.Compose:
+    """Build the image transform pipeline: augmented for training, plain for eval."""
     normalize = transforms.Normalize(mean=CIFAR10_MEAN, std=CIFAR10_STD)
     if train:
+        # Light augmentation (flip + random crop) to reduce overfitting.
         return transforms.Compose([
             transforms.RandomHorizontalFlip(),
             transforms.RandomCrop(32, padding=4),
             transforms.ToTensor(),
             normalize,
         ])
+    # No augmentation at eval time - just tensor conversion and normalization.
     return transforms.Compose([
         transforms.ToTensor(),
         normalize,
@@ -29,6 +32,7 @@ def get_transforms(train: bool = True) -> transforms.Compose:
 
 
 def _build_datasets(dataset: str, data_dir: str):
+    """Construct the (train, val) dataset pair for the requested dataset name."""
     if dataset == "cifar10":
         train_ds = datasets.CIFAR10(
             root=data_dir, train=True, download=True,
@@ -60,6 +64,7 @@ def get_dataloaders(
     num_workers: int = 2,
     dataset: str = "cifar10",
 ) -> tuple[DataLoader, DataLoader]:
+    """Build the train/val DataLoaders (shuffled for train, sequential for val)."""
     train_ds, val_ds = _build_datasets(dataset, data_dir)
 
     train_loader = DataLoader(

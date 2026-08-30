@@ -30,6 +30,7 @@ def log(entry: dict) -> None:
 
 
 def resolve_config_path(cli_arg: str | None) -> Path:
+    """Pick the config path: --config, then CONFIG_PATH env var, then defaults."""
     if cli_arg:
         return Path(cli_arg)
     env_path = os.environ.get("CONFIG_PATH")
@@ -45,11 +46,13 @@ def resolve_config_path(cli_arg: str | None) -> Path:
 
 
 def load_config(path: Path) -> dict:
+    """Parse the YAML config file into a plain dict."""
     with open(path) as f:
         return yaml.safe_load(f)
 
 
 def set_seed(seed: int) -> None:
+    """Seed Python's and PyTorch's RNGs for reproducible training runs."""
     random.seed(seed)
     torch.manual_seed(seed)
 
@@ -60,6 +63,8 @@ def run_epoch(model, loader, criterion, device, optimizer=None, max_batches=None
     model.train(training)
 
     total_loss, correct, total = 0.0, 0, 0
+    # Disable gradient tracking entirely during evaluation (training=False)
+    # to save memory and compute.
     with torch.set_grad_enabled(training):
         for batch_idx, (inputs, targets) in enumerate(loader):
             if max_batches is not None and batch_idx >= max_batches:
@@ -69,11 +74,13 @@ def run_epoch(model, loader, criterion, device, optimizer=None, max_batches=None
             outputs = model(inputs)
             loss = criterion(outputs, targets)
 
+            # Only step the optimizer when actually training.
             if training:
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
 
+            # Accumulate loss/accuracy stats for this epoch.
             total_loss += loss.item() * inputs.size(0)
             correct += (outputs.argmax(dim=1) == targets).sum().item()
             total += targets.size(0)
@@ -82,23 +89,28 @@ def run_epoch(model, loader, criterion, device, optimizer=None, max_batches=None
 
 
 def main():
+    """Load config, build model/data/optimizer, then run the training loop."""
     parser = argparse.ArgumentParser(description="Train the image classifier")
     parser.add_argument("--config", default=None, help="Path to training_config.yaml")
     args = parser.parse_args()
 
+    # --- Config ---
     config_path = resolve_config_path(args.config)
     cfg = load_config(config_path)
     log({"event": "config_loaded", "path": str(config_path)})
 
+    # --- Reproducibility and device selection ---
     set_seed(cfg["training"].get("seed", 42))
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     log({"event": "device_selected", "device": str(device)})
 
+    # --- Model ---
     model = get_model(
         architecture=cfg["model"]["architecture"],
         num_classes=cfg["model"]["num_classes"],
     ).to(device)
 
+    # --- Data ---
     train_loader, val_loader = get_dataloaders(
         data_dir=cfg["data"]["data_dir"],
         batch_size=cfg["training"]["batch_size"],
@@ -106,12 +118,14 @@ def main():
         dataset=cfg["data"].get("dataset", "cifar10"),
     )
 
+    # --- Optimizer and loss ---
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg["training"]["learning_rate"])
     criterion = nn.CrossEntropyLoss()
 
     # Optional cap on batches per epoch, used for smoke tests / CI.
     max_batches = cfg["training"].get("max_batches")
 
+    # --- Early stopping and checkpoint bookkeeping ---
     patience = cfg["training"]["early_stopping_patience"]
     best_val_loss = float("inf")
     patience_counter = 0
@@ -120,6 +134,7 @@ def main():
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     save_path = checkpoint_dir / cfg["output"]["model_name"]
 
+    # --- Training loop ---
     for epoch in range(1, cfg["training"]["epochs"] + 1):
         train_loss, train_acc = run_epoch(
             model, train_loader, criterion, device,
@@ -129,6 +144,7 @@ def main():
             model, val_loader, criterion, device, max_batches=max_batches,
         )
 
+        # Structured (JSON-line) metric log for this epoch.
         log({
             "epoch": epoch,
             "train_loss": round(train_loss, 4),
@@ -137,6 +153,8 @@ def main():
             "val_accuracy": round(val_acc, 4),
         })
 
+        # Save the checkpoint only when validation loss improves; otherwise
+        # count toward early stopping and bail out once patience runs out.
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             patience_counter = 0
